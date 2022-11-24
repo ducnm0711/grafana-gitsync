@@ -1,0 +1,143 @@
+grafana:
+  replicas: 2
+
+  imageRenderer:
+    enabled: true
+    networkPolicy:
+      limitIngress: false
+
+  grafana.ini:
+    server:
+      root_url: https://example.com
+      enable_gzip: "true"
+    auth:
+      disable_login_form: "true"
+    unified_alerting:
+      enabled: "true"
+    auth.github:
+      enabled: "true"
+      allow_sign_up: "true"
+      client_id: $__file{/etc/secrets/github-clientid}
+      client_secret: $__file{/etc/secrets/github-clientsecret}
+      scopes: user:email,read:org
+      auth_url: https://github.com/login/oauth/authorize
+      token_url: https://github.com/login/oauth/access_token
+      api_url: https://api.github.com/user
+      team_id: ""
+      allowed_organizations: myorg
+    dataproxy:
+      timeout: 600s
+      tls_handshake_timeout_seconds: 600s
+    database:
+      type: postgres
+      host: postgres.monitor:5432
+      user: $__file{/etc/secrets/psql-user}
+      password: $__file{/etc/secrets/psql-password}
+    users:
+      allow_sign_up: "false"
+      allow_org_create: "false"
+      auto_assign_org: "true"
+      auto_assign_org_id: "2"
+      auto_assign_org_role: "Viewer"
+      verify_email_enabled: "false"
+      login_hint: "email or username"
+      password_hint: "*********"
+      default_theme: "dark"
+      home_page: ""
+      viewers_can_edit: "false"
+      editors_can_admin: "false"
+      user_invite_max_lifetime_duration: "24h"
+      hidden_users: ""
+    security:
+      # Need secret_key to save secureJsonData
+      secret_key: $__file{/etc/secrets/secret-key}
+
+  service:
+    type: NodePort
+    nodePort: 30300
+  
+  headlessService: true
+
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: metrics-prometheus
+
+  #Default Admin - Hidden by default
+  admin:
+    existingSecret: grafana-secrets
+    userKey: default-admin
+    passwordKey: default-password
+
+  extraSecretMounts:
+    - name: grafana-secrets
+      secretName: grafana-secrets
+      mountPath: /etc/secrets/
+      defaultMode: 0440
+      readOnly: true
+
+  testFramework:
+    enabled: false
+
+  extraConfigmapMounts:
+    - name: git-sync-sparsecheckout-dashboards
+      mountPath: /config/gitsync/.sparsecheckout-dashboards
+      subPath: .sparsecheckout-dashboards
+      configMap: git-sync-sparsecheckout
+      readOnly: true
+
+  extraContainers: |
+    - name: git-sync-dashboards
+      image: k8s.gcr.io/git-sync/git-sync:v3.5.0
+      env:
+        - name: GIT_SYNC_REPO
+          value: "https://example.com/apps.git"
+        - name: GIT_SYNC_USERNAME
+          value: "apps"
+        - name: GIT_SYNC_PASSWORD_FILE
+          value: /etc/secrets/git-deploy-token
+        - name: GIT_SYNC_BRANCH
+          value: "main"
+        - name: GIT_SYNC_SPARSE_CHECKOUT_FILE
+          value: "/config/gitsync/.sparsecheckout-dashboards"
+        - name: GIT_SYNC_ROOT
+          value: "/tmp/dashboards"
+        - name: GIT_SYNC_WAIT
+          value: "30"
+      volumeMounts:
+        - name: grafana-secrets
+          mountPath: /etc/secrets/
+        - name: sc-dashboard-volume
+          mountPath: /tmp/dashboards
+        - name: git-sync-sparsecheckout-dashboards
+          mountPath: /config/gitsync/.sparsecheckout-dashboards
+          subPath: .sparsecheckout-dashboards
+
+  sidecar:
+    dashboards:
+      enabled: true
+      SCProvider: true
+      # provider configuration that lets grafana manage the dashboards
+      provider:
+        # name of the provider, should be unique
+        name: sidecarProvider
+        # orgid as configured in grafana
+        orgid: 1
+        # folder in which the dashboards should be imported in grafana
+        folder: ''
+        # type of the provider
+        type: file
+        # disableDelete to activate a import-only behaviour
+        disableDelete: false
+        # allow updating provisioned dashboards from the UI
+        allowUiUpdates: false
+        # allow Grafana to replicate dashboard structure from filesystem
+        foldersFromFilesStructure: true
+      # Additional dashboard sidecar volume mounts
+    datasources:
+      enabled: true
+      # label that the configmaps with datasources are marked with
+      label: grafana_datasource
+
+  plugins:
+    - grafana-polystat-panel
